@@ -28,18 +28,19 @@ struct vocab_mp{
     char *mp, *code, codelen, *inverse_mp;
 };
 
-char train_file[MAX_STRING], output_file[MAX_STRING], mp_output_file[MAX_STRING], type_file[MAX_STRING], tag_file[MAX_STRING], length_file[MAX_STRING], lon_file[MAX_STRING];
+char train_file[MAX_STRING], output_file[MAX_STRING], mp_output_file[MAX_STRING], segment_length_file[MAX_STRING];
+char word_type_file[MAX_STRING], node_type_file[MAX_STRING], node_tag_file[MAX_STRING], segment_class_file[MAX_STRING], segment_oneway_file[MAX_STRING];
 struct vocab_word *vocab;
 struct vocab_mp *mp_vocab;
 int binary = 0, debug_mode = 2,  num_threads = 1, is_deepwalk = 1, no_circle = 1, static_win = 1, learn_type = 1, learn_tag =1;
 int sigmoid_reg = 0, distance = 500;
-int *vocab_hash, *mp_vocab_hash, *node2type, *node2tag;
-long long vocab_max_size = 1000, vocab_size = 0, layer1_size = 64;
+int *vocab_hash, *mp_vocab_hash, *node2type, *node2tag, *segment2class, *segment2oneway, *segment2length, *word2type;
+long long vocab_max_size = 1000, vocab_size = 0, layer1_size = 128;
 long long mp_vocab_max_size = 1000, mp_vocab_size = 0;
 long long train_words = 0, file_size = 0;
 long long train_mps = 0;
 real alpha = 0.025, starting_alpha, last_alpha = 0;
-real beta = 0.9;
+real beta = 0.8;
 real *syn0, *syn1neg, *synmp, *expTable, *node2length;
 clock_t start;
 
@@ -370,15 +371,15 @@ void LearnMpVocabFromTrainFile() {
     fclose(fin);
 }
 
-void LoadTypeFromTypeFile() {
+void LoadNodeTypeFromNodeTypeFile() {
     char word[MAX_STRING];
     char type[MAX_STRING];
     FILE *fin;
     int i;
     for (long long a = 0; a < vocab_hash_size; a++) node2type[a] = -1;
-    fin = fopen(type_file, "rb");
+    fin = fopen(node_type_file, "rb");
     if (fin == NULL) {
-        printf("ERROR: type data file (%s) not found!\n", type_file);
+        printf("ERROR: node type data file (%s) not found!!\n", node_type_file);
         exit(1);
     }
     while (1) {
@@ -397,13 +398,13 @@ void LoadTypeFromTypeFile() {
     fclose(fin);
 }
 
-void LoadTagFromTagFile() {
+void LoadNodeTagFromNodeTagFile() {
     char word[MAX_STRING];
     char tag[MAX_STRING];
     FILE *fin;
     int i;
     for (long long a = 0; a < vocab_hash_size; a++) node2tag[a] = -1;
-    fin = fopen(tag_file, "rb");
+    fin = fopen(node_tag_file, "rb");
     if (fin == NULL) {
         printf("ERROR: tag data file (%s) not found!\n", tag_file);
         exit(1);
@@ -865,8 +866,8 @@ void TrainModel() {
     last_alpha = alpha;
     LearnVocabFromTrainFile(); // 从输入的node sequence 里提取node的信息
     LearnMpVocabFromTrainFile();//
-    if(learn_type) LoadTypeFromTypeFile();//提取node type
-    if(learn_tag) LoadTagFromTagFile();//提取node type
+    LoadNodeTypeFromNodeTypeFile();//提取node type
+    LoadNodeTagFromNodeTagFile();//提取node tag
     LoadLengthFromLengthFile();//提取segment length
     if (output_file[0] == 0) return;
     InitNet();
@@ -944,35 +945,37 @@ int ArgPos(char *str, int argc, char **argv) {
 int main(int argc, char **argv) {
     int i;
     if (argc == 1) {
-        printf("road2vec representation learning\n\n");
+        printf("Intersection and Segment representation learning\n\n");
         printf("Options:\n");
         printf("Parameters for training:\n");
         printf("\t-size <int>\n");
         printf("\t\tSet size of vectors dimension; default is 64\n");
         printf("\t-train <file>\n");
-        printf("\t\tUse text data from <file> to train the model, format of line is '<node_id> <edge_class>'\n");
-        printf("\t-learn_type <file>\n");
-        printf("\t\twhether learn type relation, 1 is true and 0 is not ,default is 1.'\n");
-        printf("\t-type_file <file>\n");
-        printf("\t\tsegments type file, format of line is '<segment_id> <type_id>'\n");
-        printf("\t-learn_tag <file>\n");
-        printf("\t\twhether learn tag relation, 1 is true and 0 is not ,default is 1.'\n");
-        printf("\t-tag_file <file>\n");
-        printf("\t\tsegments tag file, format of line is '<segment_id> <tag_id>'\n");
-        printf("\t-length_file <file>\n");
+        printf("\t\tUse text data from <file> to train the model, format of line is '<node> 0 <segment> 0 <node>' 0\n");
+        printf("\t-word_type <file>\n");
+        printf("\t\tword type file,judge a word is node or segment, format of line is '<node_id> <type_id>'\n");
+        printf("\t-node_type <file>\n");
+        printf("\t\tnode type file, format of line is '<node_id> <type_id>'\n");
+        printf("\t-node_tag <file>\n");
+        printf("\t\tnode tag file, format of line is '<node_id> <tag_id>'\n");
+        printf("\t-segment_class <file>\n");
+        printf("\t\tsegment class id file, format of line is '<segment_id> <class_id>'\n");
+        printf("\t-segment_oneway <file>\n");
+        printf("\t\tsegment oneway file, format of line is '<segment_id> <is_oneway>'\n");
+        printf("\t-segment_length <file>\n");
         printf("\t\tsegment length file, format of line is '<segment_id> <length_value>'\n");
         printf("\t-distance <int>\n");
         printf("\t\tthe distance want to learning? default is 500. distance equal to window width\n");
         printf("\t-alpha <float>\n");
         printf("\t\tSet the starting learning rate; default is 0.025\n");
         printf("\t-beta <float>\n");
-        printf("\t\tSet the weight for leaning between co-occurrence and node type; default is 0.9\n");
+        printf("\t\tSet the weight for leaning between co-occurrence and node type; default is 0.8\n");
         printf("\t-output <file>\n");
         printf("\t\tUse <file> to save the resulting node vectors\n");
         printf("\t-output_mp <file>\n");
         printf("\t\tUse <file> to save the resulting meta-path vectors\n");
         printf("\t-negative <int>\n");
-        printf("\t\tNumber of negative examples; default is 0, common values are 5 - 10 (0 = not used)\n");
+        printf("\t\tNumber of negative examples; default is 5, common values are 5 - 10 (0 = not used)\n");
         printf("\t-threads <int>\n");
         printf("\t\tUse <int> threads (default 1)\n");
         printf("\t-sigmoid_reg <1/0>\n");
@@ -980,17 +983,18 @@ int main(int argc, char **argv) {
         printf("\t-no_circle <1/0>\n");
         printf("\t\tSet to agoid circles in paths when preparing training data (default 1: avoid)\n");
         printf("\nExamples:\n");
-        printf("./road2vec -train data.txt -type_file type.txt -output vec.txt -output_mp mp.txt -size 128 -distance 500 -negative 5\n\n");
+        printf("./road2vec -train data.walk -output vec.txt -output_mp mp.txt -size 128 -distance 500 -negative 5\n\n");
         return 0;
     }
     output_file[0] = 0;
     if ((i = ArgPos((char *)"-size", argc, argv)) > 0) layer1_size = atoi(argv[i + 1]);
     if ((i = ArgPos((char *)"-train", argc, argv)) > 0) strcpy(train_file, argv[i + 1]);
-    if ((i = ArgPos((char *)"-learn_type", argc, argv)) > 0) learn_type = atoi(argv[i + 1]);
-    if ((i = ArgPos((char *)"-type_file", argc, argv)) > 0) strcpy(type_file, argv[i + 1]);
-    if ((i = ArgPos((char *)"-learn_tag", argc, argv)) > 0) learn_tag = atoi(argv[i + 1]);
-    if ((i = ArgPos((char *)"-tag_file", argc, argv)) > 0) strcpy(tag_file, argv[i + 1]);
-    if ((i = ArgPos((char *)"-length_file", argc, argv)) > 0) strcpy(length_file, argv[i + 1]);
+    if ((i = ArgPos((char *)"-word_type", argc, argv)) > 0) strcpy(word_type_file, argv[i + 1]);
+    if ((i = ArgPos((char *)"-node_type", argc, argv)) > 0) strcpy(node_type_file, argv[i + 1]);
+    if ((i = ArgPos((char *)"-node_tag", argc, argv)) > 0) strcpy(node_tag_file, argv[i + 1]);
+    if ((i = ArgPos((char *)"-segment_class", argc, argv)) > 0) strcpy(segment_class_file, argv[i + 1]);
+    if ((i = ArgPos((char *)"-segment_oneway", argc, argv)) > 0) strcpy(segment_oneway_file, argv[i + 1]);
+    if ((i = ArgPos((char *)"-segment_length", argc, argv)) > 0) strcpy(segment_length_file, argv[i + 1]);
     if ((i = ArgPos((char *)"-distance", argc, argv)) > 0) distance = atoi(argv[i + 1]);
     if ((i = ArgPos((char *)"-alpha", argc, argv)) > 0) alpha = atof(argv[i + 1]);
     if ((i = ArgPos((char *)"-beta", argc, argv)) > 0) beta = atof(argv[i + 1]);
@@ -1003,9 +1007,12 @@ int main(int argc, char **argv) {
 
     vocab = (struct vocab_word *)calloc(vocab_max_size, sizeof(struct vocab_word));
     vocab_hash = (int *)calloc(vocab_hash_size, sizeof(int));
+    word2type = (int *)calloc(vocab_hash_size, sizeof(int));
     node2type = (int *)calloc(vocab_hash_size, sizeof(int));
     node2tag = (int *)calloc(vocab_hash_size, sizeof(int));
-    node2length = (real *)calloc(vocab_hash_size, sizeof(real));
+    segment2class = (int *)calloc(vocab_hash_size, sizeof(int));
+    segment2oneway = (int *)calloc(vocab_hash_size, sizeof(int));
+    segment2length = (real *)calloc(vocab_hash_size, sizeof(real));
     mp_vocab = (struct vocab_mp*)calloc(mp_vocab_max_size, sizeof(struct vocab_mp));
     mp_vocab_hash = (int *)calloc(mp_vocab_hash_size, sizeof(int));
 
@@ -1023,8 +1030,12 @@ int main(int argc, char **argv) {
     DestroyNet();
     free(vocab_hash);
     free(mp_vocab_hash);
+    free(word2type);
     free(node2type);
     free(node2tag);
+    free(segment2class);
+    free(segment2oneway);
+    free(segment2length);
     free(node2length);
     free(expTable);
     return 0;

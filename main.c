@@ -782,7 +782,7 @@ void *TrainModelThread(void *id) {
                 next_random = next_random * (unsigned long long)25214903917 + 11;
 
 
-                if(word2type[target] == word2type[context] == 0){       // two words are node
+                if((word2type[target]==0)&&(word2type[context]==0)){       // two words are node
 
                     //Learn by same node type relationship
                     for (d = 0; d < negative + 1; ) {
@@ -938,7 +938,7 @@ void *TrainModelThread(void *id) {
 
                         if (is_deepwalk == 0) {for (c = 0; c < layer1_size; c++) synmp[c + lr] += er[c];}
                     }
-                } else if (word2type[target] == word2type[context] == 1){  // two words are segment
+                } else if ((word2type[target]==1)&&(word2type[context]==1)){  // two words are segment
 
                     //Learn by same segment class relationship
                     for (d = 0; d < negative + 1; ) {

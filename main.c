@@ -34,14 +34,14 @@ struct vocab_word *vocab;
 struct vocab_mp *mp_vocab;
 int binary = 0, debug_mode = 2,  num_threads = 1, is_deepwalk = 1, no_circle = 1, static_win = 1, learn_type = 1, learn_tag =1;
 int sigmoid_reg = 0, distance = 500;
-int *vocab_hash, *mp_vocab_hash, *node2type, *node2tag, *segment2class, *segment2oneway, *segment2length, *word2type;
+int *vocab_hash, *mp_vocab_hash, *node2type, *node2tag, *segment2class, *segment2oneway, *word2type;
 long long vocab_max_size = 1000, vocab_size = 0, layer1_size = 128;
 long long mp_vocab_max_size = 1000, mp_vocab_size = 0;
 long long train_words = 0, file_size = 0;
 long long train_mps = 0;
 real alpha = 0.025, starting_alpha, last_alpha = 0;
 real beta = 0.8;
-real *syn0, *syn1neg, *synmp, *expTable, *node2length;
+real *syn0, *syn1neg, *synmp, *expTable, *segment2length;
 clock_t start;
 
 int negative = 5;
@@ -398,6 +398,33 @@ void LoadNodeTypeFromNodeTypeFile() {
     fclose(fin);
 }
 
+void LoadWordTypeFromWordTypeFile() {
+    char word[MAX_STRING];
+    char type[MAX_STRING];
+    FILE *fin;
+    int i;
+    for (long long a = 0; a < vocab_hash_size; a++) word2type[a] = -1;
+    fin = fopen(word_type_file, "rb");
+    if (fin == NULL) {
+        printf("ERROR: node type data file (%s) not found!!\n", word_type_file);
+        exit(1);
+    }
+    while (1) {
+        ReadWord(word, fin);
+        if (feof(fin)) {
+            break;
+        }
+        if (strcmp(word, "\n") == 0) {
+            continue;
+        }
+        ReadWord(type, fin);
+        i = SearchVocab(word);
+        word2type[i] = atoi(type);
+//        printf("node:%s(%d) type:%d\n", word, i, atoi(type));
+    }
+    fclose(fin);
+}
+
 void LoadNodeTagFromNodeTagFile() {
     char word[MAX_STRING];
     char tag[MAX_STRING];
@@ -406,7 +433,7 @@ void LoadNodeTagFromNodeTagFile() {
     for (long long a = 0; a < vocab_hash_size; a++) node2tag[a] = -1;
     fin = fopen(node_tag_file, "rb");
     if (fin == NULL) {
-        printf("ERROR: tag data file (%s) not found!\n", tag_file);
+        printf("ERROR: tag data file (%s) not found!\n", node_tag_file);
         exit(1);
     }
     while (1) {
@@ -425,15 +452,69 @@ void LoadNodeTagFromNodeTagFile() {
     fclose(fin);
 }
 
-void LoadLengthFromLengthFile() {
+void LoadSegmentClassFromSegmentClassFile() {
+    char word[MAX_STRING];
+    char tag[MAX_STRING];
+    FILE *fin;
+    int i;
+    for (long long a = 0; a < vocab_hash_size; a++) segment2class[a] = -1;
+    fin = fopen(segment_class_file, "rb");
+    if (fin == NULL) {
+        printf("ERROR: tag data file (%s) not found!\n", segment_class_file);
+        exit(1);
+    }
+    while (1) {
+        ReadWord(word, fin);
+        if (feof(fin)) {
+            break;
+        }
+        if (strcmp(word, "\n") == 0) {
+            continue;
+        }
+        ReadWord(tag, fin);
+        i = SearchVocab(word);
+        segment2class[i] = atoi(tag);
+//        printf("node:%s(%d) type:%d\n", word, i, atoi(type));
+    }
+    fclose(fin);
+}
+
+void LoadSegmentOnewayFromSegmentOnewayFile() {
+    char word[MAX_STRING];
+    char tag[MAX_STRING];
+    FILE *fin;
+    int i;
+    for (long long a = 0; a < vocab_hash_size; a++) segment2oneway[a] = -1;
+    fin = fopen(segment_oneway_file, "rb");
+    if (fin == NULL) {
+        printf("ERROR: tag data file (%s) not found!\n", segment_oneway_file);
+        exit(1);
+    }
+    while (1) {
+        ReadWord(word, fin);
+        if (feof(fin)) {
+            break;
+        }
+        if (strcmp(word, "\n") == 0) {
+            continue;
+        }
+        ReadWord(tag, fin);
+        i = SearchVocab(word);
+        segment2oneway[i] = atoi(tag);
+//        printf("node:%s(%d) type:%d\n", word, i, atoi(type));
+    }
+    fclose(fin);
+}
+
+void LoadSegmentLengthFromSegmentLengthFile() {
     char word[MAX_STRING];
     char length[MAX_STRING];
     FILE *fin;
     int i;
-    for (long long a = 0; a < vocab_hash_size; a++) node2length[a] = -1;
-    fin = fopen(length_file, "rb");
+    for (long long a = 0; a < vocab_hash_size; a++) segment2length[a] = -1;
+    fin = fopen(segment_length_file, "rb");
     if (fin == NULL) {
-        printf("ERROR: segment lenght data file (%s) not found!\n", length_file);
+        printf("ERROR: segment lenght data file (%s) not found!\n", segment_length_file);
         exit(1);
     }
     while (1) {
@@ -446,7 +527,7 @@ void LoadLengthFromLengthFile() {
         }
         ReadWord(length, fin);
         i = SearchVocab(word);
-        node2length[i] = atof(length);
+        segment2length[i] = atof(length);
 //        printf("node:%s(%d) type:%d\n", word, i, atoi(type));
     }
 
@@ -594,7 +675,7 @@ void *TrainModelThread(void *id) {
             long long w_cursor;
             real dis_from_a = 0;
             for (w_cursor=a; w_cursor<node_length; w_cursor++){
-                real dis = node2length[node_seq[w_cursor]];
+                real dis = segment2length[node_seq[w_cursor]];
                 dis_from_a += dis;
                 if (dis_from_a > distance) break;
             }
@@ -695,25 +776,114 @@ void *TrainModelThread(void *id) {
 
                 }
 
-                //Learn by same node type relationship
-                if(learn_type == 1){
-                    target = node_seq[a];
+                target = node_seq[a];
+                context = node_seq[a+w];
+                mp_index = 0;
+                next_random = next_random * (unsigned long long)25214903917 + 11;
+
+
+                if(word2type[target] == word2type[context] == 0){       // two words are node
+
+                    //Learn by same node type relationship
+                    for (d = 0; d < negative + 1; ) {
+                        if (d == 0) {
+                            label = 0;
+                            if (node2type[target] == node2type[context]) label = 1;
+                            d++;
+
+                            // negative sampling
+                        } else {
+                            next_random = next_random * (unsigned long long) 25214903917 + 11;
+                            context = table[(next_random >> 16) % table_size];
+                            if(word2type[context] != 0) continue;
+                            if (context == 0) context = next_random % (vocab_size - 1) + 1;
+                            if (context == target || context == node_seq[a + w]) continue;
+                            label = 0;
+                            if (node2type[target] == node2type[context]) label = 1;
+                            d++;
+                        }
+
+                        // training of a data
+                        lx = target * layer1_size;
+                        ly = context * layer1_size;
+                        lr = mp_index * layer1_size;
+                        for (c = 0; c < layer1_size; c++) ex[c] = 0;
+                        for (c = 0; c < layer1_size; c++) er[c] = 0;
+
+                        f = 0;
+                        for (c = 0; c < layer1_size; c++) {
+                            if (sigmoid_reg) {
+                                if (synmp[c + lr] > MAX_EXP) f += syn0[c + lx] * syn0[c + ly];
+                                else if (synmp[c + lr] < -MAX_EXP) continue;
+                                else
+                                    f += syn0[c + lx] * syn0[c + ly] *
+                                         expTable[(int) ((synmp[c + lr] + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
+                            } else {
+                                if (synmp[c + lr] >= 0) f += syn0[c + lx] * syn0[c + ly];
+                            }
+                        }
+                        if (f > MAX_EXP) g = (label - 1) * alpha;
+                        else if (f < -MAX_EXP) g = (label - 0) * alpha;
+                        else g = (label - expTable[(int) ((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;
+
+                        g = g * (1.0 - beta) / 2;
+
+                        // update
+                        for (c = 0; c < layer1_size; c++) {
+                            if (sigmoid_reg) {
+                                if (synmp[c + lr] > MAX_EXP) ex[c] = g * syn0[c + ly];
+                                else if (synmp[c + lr] < -MAX_EXP) continue;
+                                else
+                                    ex[c] = g * syn0[c + ly] *
+                                            expTable[(int) ((synmp[c + lr] + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
+                            } else {
+                                if (synmp[c + lr] >= 0) ex[c] = g * syn0[c + ly];
+                            }
+                        }
+                        for (c = 0; c < layer1_size; c++) {
+                            f = synmp[c + lr];
+                            if (f > MAX_EXP || f < -MAX_EXP) continue;
+                            sigmoid = expTable[(int) ((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
+                            er[c] = g * syn0[c + lx] * syn0[c + ly] * sigmoid * (1 - sigmoid);
+                        }
+                        for (c = 0; c < layer1_size; c++) {
+                            if (sigmoid_reg) {
+                                if (synmp[c + lr] > MAX_EXP) syn0[c + ly] += g * syn0[c + lx];
+                                else if (synmp[c + lr] < -MAX_EXP) continue;
+                                else
+                                    syn0[c + ly] += g * syn0[c + lx] * expTable[(int) ((synmp[c + lr] + MAX_EXP) *
+                                                                                       (EXP_TABLE_SIZE / MAX_EXP / 2))];
+                            } else {
+                                if (synmp[c + lr] >= 0) syn0[c + ly] += g * syn0[c + lx];
+                            }
+                        }
+                        for (c = 0; c < layer1_size; c++) syn0[c + lx] += ex[c];
+
+                        if (is_deepwalk == 0) { for (c = 0; c < layer1_size; c++) synmp[c + lr] += er[c]; }
+                    }
+
+                    //Learn by same node tag relationship
+
                     context = node_seq[a+w];
                     mp_index = 0;
 
                     next_random = next_random * (unsigned long long)25214903917 + 11;
-                    for (d = 0; d < negative + 1; d++) {
+                    for (d = 0; d < negative + 1;) {
                         if (d == 0) {
                             label = 0;
-                            if (node2type[target] == node2type[context]) label = 1;
+                            if (node2tag[target] == node2tag[context]) label = 1;
+                            d++;
+
                             // negative sampling
                         } else {
                             next_random = next_random * (unsigned long long)25214903917 + 11;
                             context = table[(next_random >> 16) % table_size];
+                            if(word2type[context] != 0) continue;
                             if (context == 0) context = next_random % (vocab_size - 1) + 1;
                             if (context == target || context == node_seq[a+w]) continue;
                             label = 0;
-                            if (node2type[target] == node2type[context]) label = 1;
+                            if (node2tag[target] == node2tag[context]) label = 1;
+                            d++;
                         }
 
                         // training of a data
@@ -737,7 +907,7 @@ void *TrainModelThread(void *id) {
                         else if (f < -MAX_EXP) g = (label - 0) * alpha;
                         else g = (label - expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;
 
-                        g = g * (1.0 - beta);
+                        g = g * (1.0 - beta) / 2;
 
                         // update
                         for (c = 0; c < layer1_size; c++) {
@@ -768,27 +938,108 @@ void *TrainModelThread(void *id) {
 
                         if (is_deepwalk == 0) {for (c = 0; c < layer1_size; c++) synmp[c + lr] += er[c];}
                     }
-                }
+                } else if (word2type[target] == word2type[context] == 1){  // two words are segment
 
-                //Learn by same node tag relationship
+                    //Learn by same segment class relationship
+                    for (d = 0; d < negative + 1; ) {
+                        if (d == 0) {
+                            label = 0;
+                            if (segment2class[target] == segment2class[context]) label = 1;
+                            d++;
 
-                if(learn_tag == 1){
+                            // negative sampling
+                        } else {
+                            next_random = next_random * (unsigned long long) 25214903917 + 11;
+                            context = table[(next_random >> 16) % table_size];
+                            if(word2type[context] != 1) continue;
+                            if (context == 0) context = next_random % (vocab_size - 1) + 1;
+                            if (context == target || context == node_seq[a + w]) continue;
+                            label = 0;
+                            if (segment2class[target] == segment2class[context]) label = 1;
+                            d++;
+                        }
+
+                        // training of a data
+                        lx = target * layer1_size;
+                        ly = context * layer1_size;
+                        lr = mp_index * layer1_size;
+                        for (c = 0; c < layer1_size; c++) ex[c] = 0;
+                        for (c = 0; c < layer1_size; c++) er[c] = 0;
+
+                        f = 0;
+                        for (c = 0; c < layer1_size; c++) {
+                            if (sigmoid_reg) {
+                                if (synmp[c + lr] > MAX_EXP) f += syn0[c + lx] * syn0[c + ly];
+                                else if (synmp[c + lr] < -MAX_EXP) continue;
+                                else
+                                    f += syn0[c + lx] * syn0[c + ly] *
+                                         expTable[(int) ((synmp[c + lr] + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
+                            } else {
+                                if (synmp[c + lr] >= 0) f += syn0[c + lx] * syn0[c + ly];
+                            }
+                        }
+                        if (f > MAX_EXP) g = (label - 1) * alpha;
+                        else if (f < -MAX_EXP) g = (label - 0) * alpha;
+                        else g = (label - expTable[(int) ((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;
+
+                        g = g * (1.0 - beta) / 2;
+
+                        // update
+                        for (c = 0; c < layer1_size; c++) {
+                            if (sigmoid_reg) {
+                                if (synmp[c + lr] > MAX_EXP) ex[c] = g * syn0[c + ly];
+                                else if (synmp[c + lr] < -MAX_EXP) continue;
+                                else
+                                    ex[c] = g * syn0[c + ly] *
+                                            expTable[(int) ((synmp[c + lr] + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
+                            } else {
+                                if (synmp[c + lr] >= 0) ex[c] = g * syn0[c + ly];
+                            }
+                        }
+                        for (c = 0; c < layer1_size; c++) {
+                            f = synmp[c + lr];
+                            if (f > MAX_EXP || f < -MAX_EXP) continue;
+                            sigmoid = expTable[(int) ((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
+                            er[c] = g * syn0[c + lx] * syn0[c + ly] * sigmoid * (1 - sigmoid);
+                        }
+                        for (c = 0; c < layer1_size; c++) {
+                            if (sigmoid_reg) {
+                                if (synmp[c + lr] > MAX_EXP) syn0[c + ly] += g * syn0[c + lx];
+                                else if (synmp[c + lr] < -MAX_EXP) continue;
+                                else
+                                    syn0[c + ly] += g * syn0[c + lx] * expTable[(int) ((synmp[c + lr] + MAX_EXP) *
+                                                                                       (EXP_TABLE_SIZE / MAX_EXP / 2))];
+                            } else {
+                                if (synmp[c + lr] >= 0) syn0[c + ly] += g * syn0[c + lx];
+                            }
+                        }
+                        for (c = 0; c < layer1_size; c++) syn0[c + lx] += ex[c];
+
+                        if (is_deepwalk == 0) { for (c = 0; c < layer1_size; c++) synmp[c + lr] += er[c]; }
+                    }
+
+                    //Learn by same segment oneway relationship
+
                     context = node_seq[a+w];
                     mp_index = 0;
 
                     next_random = next_random * (unsigned long long)25214903917 + 11;
-                    for (d = 0; d < negative + 1; d++) {
+                    for (d = 0; d < negative + 1;) {
                         if (d == 0) {
                             label = 0;
-                            if (node2tag[target] == node2tag[context]) label = 1;
+                            if (segment2oneway[target] == segment2oneway[context]) label = 1;
+                            d++;
+
                             // negative sampling
                         } else {
                             next_random = next_random * (unsigned long long)25214903917 + 11;
                             context = table[(next_random >> 16) % table_size];
+                            if(word2type[context] != 1) continue;
                             if (context == 0) context = next_random % (vocab_size - 1) + 1;
                             if (context == target || context == node_seq[a+w]) continue;
                             label = 0;
-                            if (node2tag[target] == node2tag[context]) label = 1;
+                            if (segment2oneway[target] == segment2oneway[context]) label = 1;
+                            d++;
                         }
 
                         // training of a data
@@ -812,7 +1063,7 @@ void *TrainModelThread(void *id) {
                         else if (f < -MAX_EXP) g = (label - 0) * alpha;
                         else g = (label - expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;
 
-                        g = g * (1.0 - beta);
+                        g = g * (1.0 - beta) / 2;
 
                         // update
                         for (c = 0; c < layer1_size; c++) {
@@ -843,6 +1094,7 @@ void *TrainModelThread(void *id) {
 
                         if (is_deepwalk == 0) {for (c = 0; c < layer1_size; c++) synmp[c + lr] += er[c];}
                     }
+
                 }
             }
         }
@@ -866,9 +1118,12 @@ void TrainModel() {
     last_alpha = alpha;
     LearnVocabFromTrainFile(); // 从输入的node sequence 里提取node的信息
     LearnMpVocabFromTrainFile();//
+    LoadWordTypeFromWordTypeFile();//提取word type
     LoadNodeTypeFromNodeTypeFile();//提取node type
     LoadNodeTagFromNodeTagFile();//提取node tag
-    LoadLengthFromLengthFile();//提取segment length
+    LoadSegmentClassFromSegmentClassFile();//提取segment class
+    LoadSegmentOnewayFromSegmentOnewayFile();//提取segment oneway
+    LoadSegmentLengthFromSegmentLengthFile();//提取segment length
     if (output_file[0] == 0) return;
     InitNet();
     InitUnigramTable(); //一元表，负采样
@@ -951,9 +1206,9 @@ int main(int argc, char **argv) {
         printf("\t-size <int>\n");
         printf("\t\tSet size of vectors dimension; default is 64\n");
         printf("\t-train <file>\n");
-        printf("\t\tUse text data from <file> to train the model, format of line is '<node> 0 <segment> 0 <node>' 0\n");
+        printf("\t\tUse text data from <file> to train the model, format of line is '<node> 0 <segment> 0 <node> 0'\n");
         printf("\t-word_type <file>\n");
-        printf("\t\tword type file,judge a word is node or segment, format of line is '<node_id> <type_id>'\n");
+        printf("\t\tword type file,judge a word is node or segment, format of line is '<word_id> <type_id>' 0 is node\n");
         printf("\t-node_type <file>\n");
         printf("\t\tnode type file, format of line is '<node_id> <type_id>'\n");
         printf("\t-node_tag <file>\n");
@@ -1036,7 +1291,6 @@ int main(int argc, char **argv) {
     free(segment2class);
     free(segment2oneway);
     free(segment2length);
-    free(node2length);
     free(expTable);
     return 0;
 }

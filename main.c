@@ -675,6 +675,7 @@ void *TrainModelThread(void *id) {
             long long w_cursor;
             real dis_from_a = 0;
             for (w_cursor=a; w_cursor<node_length; w_cursor++){
+                if (word2type[node_seq[w_cursor]] == 0) continue;
                 real dis = segment2length[node_seq[w_cursor]];
                 dis_from_a += dis;
                 if (dis_from_a > distance) break;

@@ -40,7 +40,7 @@ long long mp_vocab_max_size = 1000, mp_vocab_size = 0;
 long long train_words = 0, file_size = 0;
 long long train_mps = 0;
 real alpha = 0.025, starting_alpha, last_alpha = 0;
-real beta = 0.8;
+real beta = 0.8, node_weight = 0.4, segment_weight = 0.4;
 real *syn0, *syn1neg, *synmp, *expTable, *segment2length;
 clock_t start;
 
@@ -690,9 +690,14 @@ void *TrainModelThread(void *id) {
             }
             for (w=1; w<=cur_win; w++) {
 
+                real current_learn_weight = 1.0;
+
                 if (a+w >= node_length) continue;
+
                 target = node_seq[a];//x
                 context = node_seq[a+w];//y
+                mp_index = 0;
+                mp = edge_seq[a];
 
                 //check circles
                 if (no_circle == 1) {
@@ -703,87 +708,83 @@ void *TrainModelThread(void *id) {
                     if (has_circle) continue;
                 }
 
-                //Learn by co-occurrence relationship
-                mp = edge_seq[a];
-
-//                for (b=1; b<w; b++) {strcat(mp, edge_seq[a+b]);}
-
-                mp_index = SearchMpVocab(mp);
-
-
                 next_random = next_random * (unsigned long long)25214903917 + 11;
-                for (d = 0; d < negative + 1; d++) {
-                    if (d == 0) {
-                        label = 1;
-                        // negative sampling
-                    } else {
-                        next_random = next_random * (unsigned long long)25214903917 + 11;
-                        context = table[(next_random >> 16) % table_size];
-                        if (context == 0) context = next_random % (vocab_size - 1) + 1;
-                        if (context == target || context == node_seq[a+w]) continue;
-                        label = 0;
-                    }
-                    lx =target * layer1_size;//layer1_size为维度，定位到Wx中，关于x的embedding的存储起始位置
-                    ly = context * layer1_size;
-                    lr = mp_index * layer1_size;
-                    for (c = 0; c < layer1_size; c++) {
-                        ex[c] = 0;
-                        er[c] = 0;
-                    }
-                    f = 0;
-                    for (c = 0; c < layer1_size; c++) {
-                        if (sigmoid_reg) {
-                            if (synmp[c + lr] > MAX_EXP) f += syn0[c + lx] * syn0[c + ly];
-                            else if (synmp[c + lr] < -MAX_EXP) continue;
-                            else f += syn0[c + lx] * syn0[c + ly] * expTable[(int)((synmp[c + lr] + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
-                        } else {
-                            if (synmp[c + lr] >= 0) f += syn0[c + lx] * syn0[c + ly];//syn0是存储Wx的内存空间（点乘操作）
-                        }
-                    }
-                    if (f > MAX_EXP) g = (label - 1) * alpha;
-                    else if (f < -MAX_EXP) g = (label - 0) * alpha;
-                    else g = (label - expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;//寻找一个与exptalbe中f最近的一个点的sigmoid值并计算出梯度
 
-                    g = g * beta;
+                if((word2type[target]==0)&&(word2type[context]==0)){       // two words are node
 
-                    // update
-                    for (c = 0; c < layer1_size; c++) {
-                        if (sigmoid_reg) {
-                            if (synmp[c + lr] > MAX_EXP) ex[c] = g * syn0[c + ly];
-                            else if (synmp[c + lr] < -MAX_EXP) continue;
-                            else ex[c] = g * syn0[c + ly] * expTable[(int)((synmp[c + lr] + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
+                    current_learn_weight = node_weight;
+
+                    //Learn by co-occurrence relationship
+                    mp_index = SearchMpVocab(mp);
+                    next_random = next_random * (unsigned long long)25214903917 + 11;
+
+                    for (d = 0; d < negative + 1;) {
+                        if (d == 0) {
+                            label = 1;
+                            d++;
+                            // negative sampling
                         } else {
-                            if (synmp[c + lr] >= 0) ex[c] = g * syn0[c + ly];
+                            next_random = next_random * (unsigned long long)25214903917 + 11;
+                            context = table[(next_random >> 16) % table_size];
+                            if(word2type[target] != word2type[context]) continue;
+                            if (context == 0) context = next_random % (vocab_size - 1) + 1;
+                            if (context == target || context == node_seq[a+w]) continue;
+                            label = 0;
+                            d++;
                         }
-                    }
+                        lx =target * layer1_size;//layer1_size为维度，定位到Wx中，关于x的embedding的存储起始位置
+                        ly = context * layer1_size;
+                        lr = mp_index * layer1_size;
+                        for (c = 0; c < layer1_size; c++) {
+                            ex[c] = 0;
+                            er[c] = 0;
+                        }
+                        f = 0;
+                        for (c = 0; c < layer1_size; c++) {
+                            if (sigmoid_reg) {
+                                if (synmp[c + lr] > MAX_EXP) f += syn0[c + lx] * syn0[c + ly];
+                                else if (synmp[c + lr] < -MAX_EXP) continue;
+                                else f += syn0[c + lx] * syn0[c + ly] * expTable[(int)((synmp[c + lr] + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
+                            } else {
+                                if (synmp[c + lr] >= 0) f += syn0[c + lx] * syn0[c + ly];//syn0是存储Wx的内存空间（点乘操作）
+                            }
+                        }
+                        if (f > MAX_EXP) g = (label - 1) * alpha;
+                        else if (f < -MAX_EXP) g = (label - 0) * alpha;
+                        else g = (label - expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;//寻找一个与exptalbe中f最近的一个点的sigmoid值并计算出梯度
+
+                        g = g * beta * current_learn_weight;
+
+                        // update
+                        for (c = 0; c < layer1_size; c++) {
+                            if (sigmoid_reg) {
+                                if (synmp[c + lr] > MAX_EXP) ex[c] = g * syn0[c + ly];
+                                else if (synmp[c + lr] < -MAX_EXP) continue;
+                                else ex[c] = g * syn0[c + ly] * expTable[(int)((synmp[c + lr] + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
+                            } else {
+                                if (synmp[c + lr] >= 0) ex[c] = g * syn0[c + ly];
+                            }
+                        }
 //                    for (c = 0; c < layer1_size; c++) {
 //                        f = synmp[c + lr];
 //                        if (f > MAX_EXP || f < -MAX_EXP) continue;
 //                        sigmoid = expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
 //                        er[c] = g * syn0[c + lx] * syn0[c + ly] * sigmoid * (1-sigmoid);
 //                    }
-                    for (c = 0; c < layer1_size; c++) {
-                        if (sigmoid_reg) {
-                            if (synmp[c + lr] > MAX_EXP) syn0[c + ly] += g * syn0[c + lx];
-                            else if (synmp[c + lr] < -MAX_EXP) continue;
-                            else syn0[c + ly] += g * syn0[c + lx] * expTable[(int)((synmp[c + lr] + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
-                        } else {
-                            if (synmp[c + lr] >= 0) syn0[c + ly] += g * syn0[c + lx];
+                        for (c = 0; c < layer1_size; c++) {
+                            if (sigmoid_reg) {
+                                if (synmp[c + lr] > MAX_EXP) syn0[c + ly] += g * syn0[c + lx];
+                                else if (synmp[c + lr] < -MAX_EXP) continue;
+                                else syn0[c + ly] += g * syn0[c + lx] * expTable[(int)((synmp[c + lr] + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
+                            } else {
+                                if (synmp[c + lr] >= 0) syn0[c + ly] += g * syn0[c + lx];
+                            }
                         }
+                        for (c = 0; c < layer1_size; c++) syn0[c + lx] += ex[c];
+
+                        if (is_deepwalk == 0) {for (c = 0; c < layer1_size; c++) synmp[c + lr] += er[c];}
+
                     }
-                    for (c = 0; c < layer1_size; c++) syn0[c + lx] += ex[c];
-
-                    if (is_deepwalk == 0) {for (c = 0; c < layer1_size; c++) synmp[c + lr] += er[c];}
-
-                }
-
-                target = node_seq[a];
-                context = node_seq[a+w];
-                mp_index = 0;
-                next_random = next_random * (unsigned long long)25214903917 + 11;
-
-
-                if((word2type[target]==0)&&(word2type[context]==0)){       // two words are node
 
                     //Learn by same node type relationship
                     for (d = 0; d < negative + 1; ) {
@@ -827,7 +828,7 @@ void *TrainModelThread(void *id) {
                         else if (f < -MAX_EXP) g = (label - 0) * alpha;
                         else g = (label - expTable[(int) ((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;
 
-                        g = g * (1.0 - beta) / 2;
+                        g = g * ((1.0 - beta) / 2) * current_learn_weight;
 
                         // update
                         for (c = 0; c < layer1_size; c++) {
@@ -908,7 +909,7 @@ void *TrainModelThread(void *id) {
                         else if (f < -MAX_EXP) g = (label - 0) * alpha;
                         else g = (label - expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;
 
-                        g = g * (1.0 - beta) / 2;
+                        g = g * ((1.0 - beta) / 2) * current_learn_weight;
 
                         // update
                         for (c = 0; c < layer1_size; c++) {
@@ -940,6 +941,80 @@ void *TrainModelThread(void *id) {
                         if (is_deepwalk == 0) {for (c = 0; c < layer1_size; c++) synmp[c + lr] += er[c];}
                     }
                 } else if ((word2type[target]==1)&&(word2type[context]==1)){  // two words are segment
+
+                    current_learn_weight = segment_weight;
+
+                    //Learn by co-occurrence relationship
+                    mp_index = SearchMpVocab(mp);
+                    next_random = next_random * (unsigned long long)25214903917 + 11;
+
+                    for (d = 0; d < negative + 1;) {
+                        if (d == 0) {
+                            label = 1;
+                            d++;
+                            // negative sampling
+                        } else {
+                            next_random = next_random * (unsigned long long)25214903917 + 11;
+                            context = table[(next_random >> 16) % table_size];
+                            if (word2type[target] != word2type[context]) continue;
+                            if (context == 0) context = next_random % (vocab_size - 1) + 1;
+                            if (context == target || context == node_seq[a+w]) continue;
+                            label = 0;
+                            d++;
+                        }
+                        lx =target * layer1_size;//layer1_size为维度，定位到Wx中，关于x的embedding的存储起始位置
+                        ly = context * layer1_size;
+                        lr = mp_index * layer1_size;
+                        for (c = 0; c < layer1_size; c++) {
+                            ex[c] = 0;
+                            er[c] = 0;
+                        }
+                        f = 0;
+                        for (c = 0; c < layer1_size; c++) {
+                            if (sigmoid_reg) {
+                                if (synmp[c + lr] > MAX_EXP) f += syn0[c + lx] * syn0[c + ly];
+                                else if (synmp[c + lr] < -MAX_EXP) continue;
+                                else f += syn0[c + lx] * syn0[c + ly] * expTable[(int)((synmp[c + lr] + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
+                            } else {
+                                if (synmp[c + lr] >= 0) f += syn0[c + lx] * syn0[c + ly];//syn0是存储Wx的内存空间（点乘操作）
+                            }
+                        }
+                        if (f > MAX_EXP) g = (label - 1) * alpha;
+                        else if (f < -MAX_EXP) g = (label - 0) * alpha;
+                        else g = (label - expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;//寻找一个与exptalbe中f最近的一个点的sigmoid值并计算出梯度
+
+                        g = g * beta * current_learn_weight ;
+
+                        // update
+                        for (c = 0; c < layer1_size; c++) {
+                            if (sigmoid_reg) {
+                                if (synmp[c + lr] > MAX_EXP) ex[c] = g * syn0[c + ly];
+                                else if (synmp[c + lr] < -MAX_EXP) continue;
+                                else ex[c] = g * syn0[c + ly] * expTable[(int)((synmp[c + lr] + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
+                            } else {
+                                if (synmp[c + lr] >= 0) ex[c] = g * syn0[c + ly];
+                            }
+                        }
+//                    for (c = 0; c < layer1_size; c++) {
+//                        f = synmp[c + lr];
+//                        if (f > MAX_EXP || f < -MAX_EXP) continue;
+//                        sigmoid = expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
+//                        er[c] = g * syn0[c + lx] * syn0[c + ly] * sigmoid * (1-sigmoid);
+//                    }
+                        for (c = 0; c < layer1_size; c++) {
+                            if (sigmoid_reg) {
+                                if (synmp[c + lr] > MAX_EXP) syn0[c + ly] += g * syn0[c + lx];
+                                else if (synmp[c + lr] < -MAX_EXP) continue;
+                                else syn0[c + ly] += g * syn0[c + lx] * expTable[(int)((synmp[c + lr] + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
+                            } else {
+                                if (synmp[c + lr] >= 0) syn0[c + ly] += g * syn0[c + lx];
+                            }
+                        }
+                        for (c = 0; c < layer1_size; c++) syn0[c + lx] += ex[c];
+
+                        if (is_deepwalk == 0) {for (c = 0; c < layer1_size; c++) synmp[c + lr] += er[c];}
+
+                    }
 
                     //Learn by same segment class relationship
                     for (d = 0; d < negative + 1; ) {
@@ -983,7 +1058,7 @@ void *TrainModelThread(void *id) {
                         else if (f < -MAX_EXP) g = (label - 0) * alpha;
                         else g = (label - expTable[(int) ((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;
 
-                        g = g * (1.0 - beta) / 2;
+                        g = g * (1.0 - beta) * current_learn_weight;
 
                         // update
                         for (c = 0; c < layer1_size; c++) {
@@ -1019,37 +1094,35 @@ void *TrainModelThread(void *id) {
                         if (is_deepwalk == 0) { for (c = 0; c < layer1_size; c++) synmp[c + lr] += er[c]; }
                     }
 
-                    //Learn by same segment oneway relationship
+                }else{ // one is intersection and another is segment
 
-                    context = node_seq[a+w];
-                    mp_index = 0;
+                    current_learn_weight = 1 - node_weight - segment_weight;
 
+                    //Learn by co-occurrence relationship
+                    mp_index = SearchMpVocab(mp);
                     next_random = next_random * (unsigned long long)25214903917 + 11;
+
                     for (d = 0; d < negative + 1;) {
                         if (d == 0) {
-                            label = 0;
-                            if (segment2oneway[target] == segment2oneway[context]) label = 1;
+                            label = 1;
                             d++;
-
                             // negative sampling
                         } else {
                             next_random = next_random * (unsigned long long)25214903917 + 11;
                             context = table[(next_random >> 16) % table_size];
-                            if(word2type[context] != 1) continue;
+                            if(word2type[target] == word2type[context]) continue;
                             if (context == 0) context = next_random % (vocab_size - 1) + 1;
                             if (context == target || context == node_seq[a+w]) continue;
                             label = 0;
-                            if (segment2oneway[target] == segment2oneway[context]) label = 1;
                             d++;
                         }
-
-                        // training of a data
-                        lx = target * layer1_size;
+                        lx =target * layer1_size;//layer1_size为维度，定位到Wx中，关于x的embedding的存储起始位置
                         ly = context * layer1_size;
                         lr = mp_index * layer1_size;
-                        for (c = 0; c < layer1_size; c++) ex[c] = 0;
-                        for (c = 0; c < layer1_size; c++) er[c] = 0;
-
+                        for (c = 0; c < layer1_size; c++) {
+                            ex[c] = 0;
+                            er[c] = 0;
+                        }
                         f = 0;
                         for (c = 0; c < layer1_size; c++) {
                             if (sigmoid_reg) {
@@ -1057,14 +1130,14 @@ void *TrainModelThread(void *id) {
                                 else if (synmp[c + lr] < -MAX_EXP) continue;
                                 else f += syn0[c + lx] * syn0[c + ly] * expTable[(int)((synmp[c + lr] + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
                             } else {
-                                if (synmp[c + lr] >= 0) f += syn0[c + lx] * syn0[c + ly];
+                                if (synmp[c + lr] >= 0) f += syn0[c + lx] * syn0[c + ly];//syn0是存储Wx的内存空间（点乘操作）
                             }
                         }
                         if (f > MAX_EXP) g = (label - 1) * alpha;
                         else if (f < -MAX_EXP) g = (label - 0) * alpha;
-                        else g = (label - expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;
+                        else g = (label - expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;//寻找一个与exptalbe中f最近的一个点的sigmoid值并计算出梯度
 
-                        g = g * (1.0 - beta) / 2;
+                        g = g * current_learn_weight;
 
                         // update
                         for (c = 0; c < layer1_size; c++) {
@@ -1076,12 +1149,12 @@ void *TrainModelThread(void *id) {
                                 if (synmp[c + lr] >= 0) ex[c] = g * syn0[c + ly];
                             }
                         }
-                        for (c = 0; c < layer1_size; c++) {
-                            f = synmp[c + lr];
-                            if (f > MAX_EXP || f < -MAX_EXP) continue;
-                            sigmoid = expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
-                            er[c] = g * syn0[c + lx] * syn0[c + ly] * sigmoid * (1-sigmoid);
-                        }
+//                    for (c = 0; c < layer1_size; c++) {
+//                        f = synmp[c + lr];
+//                        if (f > MAX_EXP || f < -MAX_EXP) continue;
+//                        sigmoid = expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
+//                        er[c] = g * syn0[c + lx] * syn0[c + ly] * sigmoid * (1-sigmoid);
+//                    }
                         for (c = 0; c < layer1_size; c++) {
                             if (sigmoid_reg) {
                                 if (synmp[c + lr] > MAX_EXP) syn0[c + ly] += g * syn0[c + lx];
@@ -1094,8 +1167,8 @@ void *TrainModelThread(void *id) {
                         for (c = 0; c < layer1_size; c++) syn0[c + lx] += ex[c];
 
                         if (is_deepwalk == 0) {for (c = 0; c < layer1_size; c++) synmp[c + lr] += er[c];}
-                    }
 
+                    }
                 }
             }
         }
@@ -1226,6 +1299,10 @@ int main(int argc, char **argv) {
         printf("\t\tSet the starting learning rate; default is 0.025\n");
         printf("\t-beta <float>\n");
         printf("\t\tSet the weight for leaning between co-occurrence and node type; default is 0.8\n");
+        printf("\t-node_weight <float>\n");
+        printf("\t\tSet the weight for leaning between two intersection; default is 0.4\n");
+        printf("\t-segment_weight <float>\n");
+        printf("\t\tSet the weight for leaning between two segment; default is 0.4\n");
         printf("\t-output <file>\n");
         printf("\t\tUse <file> to save the resulting node vectors\n");
         printf("\t-output_mp <file>\n");
@@ -1254,6 +1331,8 @@ int main(int argc, char **argv) {
     if ((i = ArgPos((char *)"-distance", argc, argv)) > 0) distance = atoi(argv[i + 1]);
     if ((i = ArgPos((char *)"-alpha", argc, argv)) > 0) alpha = atof(argv[i + 1]);
     if ((i = ArgPos((char *)"-beta", argc, argv)) > 0) beta = atof(argv[i + 1]);
+    if ((i = ArgPos((char *)"-node_weight", argc, argv)) > 0) node_weight = atof(argv[i + 1]);
+    if ((i = ArgPos((char *)"-segment_weight", argc, argv)) > 0) segment_weight = atof(argv[i + 1]);
     if ((i = ArgPos((char *)"-output", argc, argv)) > 0) strcpy(output_file, argv[i + 1]);
     if ((i = ArgPos((char *)"-output_mp", argc, argv)) > 0) strcpy(mp_output_file, argv[i + 1]);
     if ((i = ArgPos((char *)"-negative", argc, argv)) > 0) negative = atoi(argv[i + 1]);

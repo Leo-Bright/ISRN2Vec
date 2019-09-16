@@ -1192,11 +1192,17 @@ void TrainModel() {
     last_alpha = alpha;
     LearnVocabFromTrainFile(); // 从输入的node sequence 里提取node的信息
     LearnMpVocabFromTrainFile();//
+    printf("Starting loading word_type file %s\n", word_type_file);
     LoadWordTypeFromWordTypeFile();//提取word type
+    printf("Starting loading node_type file %s\n", node_type_file);
     LoadNodeTypeFromNodeTypeFile();//提取node type
+    printf("Starting loading node_tag file %s\n", node_tag_file);
     LoadNodeTagFromNodeTagFile();//提取node tag
+    printf("Starting loading segment_class file %s\n", segment_class_file);
     LoadSegmentClassFromSegmentClassFile();//提取segment class
+    printf("Starting loading segment_oneway file %s\n", segment_oneway_file);
     LoadSegmentOnewayFromSegmentOnewayFile();//提取segment oneway
+    printf("Starting loading segment_length file %s\n", segment_length_file);
     LoadSegmentLengthFromSegmentLengthFile();//提取segment length
     if (output_file[0] == 0) return;
     InitNet();

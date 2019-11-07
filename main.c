@@ -1098,6 +1098,8 @@ void *TrainModelThread(void *id) {
 
                     current_learn_weight = 1 - node_weight - segment_weight;
 
+                    real intersection_weight = 1 / w;
+
                     //Learn by co-occurrence relationship
                     mp_index = SearchMpVocab(mp);
                     next_random = next_random * (unsigned long long)25214903917 + 11;
@@ -1137,7 +1139,7 @@ void *TrainModelThread(void *id) {
                         else if (f < -MAX_EXP) g = (label - 0) * alpha;
                         else g = (label - expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;//寻找一个与exptalbe中f最近的一个点的sigmoid值并计算出梯度
 
-                        g = g * current_learn_weight;
+                        g = g * current_learn_weight * intersection_weight;
 
                         // update
                         for (c = 0; c < layer1_size; c++) {
